@@ -23,17 +23,26 @@ jobs:
       - name: Checkout bucket
         uses: actions/checkout@v7
 
-      - name: Generate manifest from latest legacy release
+      - name: Generate manifest from highest legacy release
         shell: bash
         run: |
           set -euo pipefail
 
-          if ! release_json="$(gh api repos/buzlet/ffmpeg-nvenc-legacy/releases/latest 2>/dev/null)"; then
+          mapfile -t release_tags < <(
+            gh api --paginate repos/buzlet/ffmpeg-nvenc-legacy/releases \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+              | grep -E '^v[0-9]+\.[0-9]+(\.[0-9]+)?-nv13\.0-r[0-9]+$' \
+              | sort -V
+          )
+
+          if (( ${#release_tags[@]} == 0 )); then
             echo 'No ffmpeg-nvenc-legacy release exists yet; nothing to update.'
             exit 0
           fi
 
-          tag="$(jq -r '.tag_name' <<< "$release_json")"
+          tag="${release_tags[-1]}"
+          release_json="$(gh api "repos/buzlet/ffmpeg-nvenc-legacy/releases/tags/$tag")"
+
           if ! [[ "$tag" =~ ^v([0-9]+\.[0-9]+(\.[0-9]+)?)-nv13\.0-r([0-9]+)$ ]]; then
             echo "Unexpected release tag: $tag" >&2
             exit 1
@@ -47,24 +56,33 @@ jobs:
 
           asset_url="$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<< "$release_json")"
           sha_url="$(jq -r --arg name "$sha_asset" '.assets[] | select(.name == $name) | .browser_download_url' <<< "$release_json")"
+          asset_digest="$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | (.digest // "")' <<< "$release_json")"
 
-          if [[ -z "$asset_url" || "$asset_url" == null || -z "$sha_url" || "$sha_url" == null ]]; then
-            echo "Required release assets not found for $tag" >&2
+          if [[ -z "$asset_url" || "$asset_url" == null ]]; then
+            echo "Binary release asset not found for $tag" >&2
             exit 1
           fi
 
-          sha256="$(curl -fsSL "$sha_url" | awk 'NR == 1 { print $1 }')"
-          if ! [[ "$sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
-            echo "Invalid SHA256 received: $sha256" >&2
-            exit 1
+          if [[ "$asset_digest" =~ ^sha256:([0-9a-fA-F]{64})$ ]]; then
+            sha256="${BASH_REMATCH[1],,}"
+          else
+            if [[ -z "$sha_url" || "$sha_url" == null ]]; then
+              echo "Neither GitHub digest nor SHA256 sidecar is available for $tag" >&2
+              exit 1
+            fi
+            sha256="$(curl -fsSL "$sha_url" | awk 'NR == 1 { print $1 }')"
+            if ! [[ "$sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+              echo "Invalid SHA256 received: $sha256" >&2
+              exit 1
+            fi
+            sha256="${sha256,,}"
           fi
-          sha256="${sha256,,}"
 
           mkdir -p bucket
           cat > bucket/ffmpeg-nvenc-legacy.json <<EOF
           {
               "version": "$package_version",
-              "description": "Current FFmpeg built with NVENC API 13.0 for NVIDIA GPUs/drivers that cannot use the newest nv-codec API.",
+              "description": "Current FFmpeg built with NVENC API 13.0 for NVIDIA GPUs and legacy driver branches.",
               "homepage": "https://github.com/buzlet/ffmpeg-nvenc-legacy",
               "license": "GPL-3.0-or-later",
               "architecture": {
@@ -87,7 +105,8 @@ jobs:
 
           python3 -m json.tool bucket/ffmpeg-nvenc-legacy.json >/dev/null
 
-          if git diff --quiet -- bucket/ffmpeg-nvenc-legacy.json && git ls-files --error-unmatch bucket/ffmpeg-nvenc-legacy.json >/dev/null 2>&1; then
+          if git diff --quiet -- bucket/ffmpeg-nvenc-legacy.json \
+             && git ls-files --error-unmatch bucket/ffmpeg-nvenc-legacy.json >/dev/null 2>&1; then
             echo "Manifest already current: $package_version"
             exit 0
           fi
