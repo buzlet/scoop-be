@@ -1,0 +1,99 @@
+# .github/workflows/update-ffmpeg-nvenc-legacy.yml
+name: Update ffmpeg-nvenc-legacy manifest
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '47 6 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-ffmpeg-nvenc-legacy
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout bucket
+        uses: actions/checkout@v7
+
+      - name: Generate manifest from latest legacy release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! release_json="$(gh api repos/buzlet/ffmpeg-nvenc-legacy/releases/latest 2>/dev/null)"; then
+            echo 'No ffmpeg-nvenc-legacy release exists yet; nothing to update.'
+            exit 0
+          fi
+
+          tag="$(jq -r '.tag_name' <<< "$release_json")"
+          if ! [[ "$tag" =~ ^v([0-9]+\.[0-9]+(\.[0-9]+)?)-nv13\.0-r([0-9]+)$ ]]; then
+            echo "Unexpected release tag: $tag" >&2
+            exit 1
+          fi
+
+          ffver="${BASH_REMATCH[1]}"
+          revision="${BASH_REMATCH[3]}"
+          package_version="${ffver}-nv13.0-r${revision}"
+          asset="ffmpeg-${ffver}-win64-gpl-nvenc13.0.zip"
+          sha_asset="${asset}.sha256"
+
+          asset_url="$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<< "$release_json")"
+          sha_url="$(jq -r --arg name "$sha_asset" '.assets[] | select(.name == $name) | .browser_download_url' <<< "$release_json")"
+
+          if [[ -z "$asset_url" || "$asset_url" == null || -z "$sha_url" || "$sha_url" == null ]]; then
+            echo "Required release assets not found for $tag" >&2
+            exit 1
+          fi
+
+          sha256="$(curl -fsSL "$sha_url" | awk 'NR == 1 { print $1 }')"
+          if ! [[ "$sha256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "Invalid SHA256 received: $sha256" >&2
+            exit 1
+          fi
+          sha256="${sha256,,}"
+
+          mkdir -p bucket
+          cat > bucket/ffmpeg-nvenc-legacy.json <<EOF
+          {
+              "version": "$package_version",
+              "description": "Current FFmpeg built with NVENC API 13.0 for NVIDIA GPUs/drivers that cannot use the newest nv-codec API.",
+              "homepage": "https://github.com/buzlet/ffmpeg-nvenc-legacy",
+              "license": "GPL-3.0-or-later",
+              "architecture": {
+                  "64bit": {
+                      "url": "$asset_url",
+                      "hash": "$sha256"
+                  }
+              },
+              "bin": [
+                  "ffmpeg.exe",
+                  "ffplay.exe",
+                  "ffprobe.exe"
+              ],
+              "notes": [
+                  "Uses nv-codec-headers 13.0 / NVENC API 13.0 for legacy NVIDIA driver compatibility.",
+                  "The package exposes the same ffmpeg, ffprobe and ffplay commands as the standard Scoop ffmpeg package. Remove or switch the other package if its shims take precedence."
+              ]
+          }
+          EOF
+
+          python3 -m json.tool bucket/ffmpeg-nvenc-legacy.json >/dev/null
+
+          if git diff --quiet -- bucket/ffmpeg-nvenc-legacy.json && git ls-files --error-unmatch bucket/ffmpeg-nvenc-legacy.json >/dev/null 2>&1; then
+            echo "Manifest already current: $package_version"
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bucket/ffmpeg-nvenc-legacy.json
+          git commit -m "ffmpeg-nvenc-legacy: update to ${package_version}"
+          git push
