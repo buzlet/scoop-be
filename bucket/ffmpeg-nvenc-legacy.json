@@ -1,0 +1,21 @@
+{
+    "version": "9.0.1-nv13.0-r1",
+    "description": "Current FFmpeg built with NVENC API 13.0 for NVIDIA GPUs and legacy driver branches.",
+    "homepage": "https://github.com/buzlet/ffmpeg-nvenc-legacy",
+    "license": "GPL-3.0-or-later",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/buzlet/ffmpeg-nvenc-legacy/releases/download/v9.0.1-nv13.0-r1/ffmpeg-9.0.1-win64-gpl-nvenc13.0.zip",
+            "hash": "73c4e96e4a1c0174192685eef5557119dbb7f425bd5e4ce392f9205aef18c92c"
+        }
+    },
+    "bin": [
+        "ffmpeg.exe",
+        "ffplay.exe",
+        "ffprobe.exe"
+    ],
+    "notes": [
+        "Uses nv-codec-headers 13.0 / NVENC API 13.0 for legacy NVIDIA driver compatibility.",
+        "The package exposes the same ffmpeg, ffprobe and ffplay commands as the standard Scoop ffmpeg package. Remove or switch the other package if its shims take precedence."
+    ]
+}
