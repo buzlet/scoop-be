@@ -1,0 +1,8 @@
+{
+    "version": "1.0.0",
+    "description": "Create Scoop shims for executables by name, path, or drag-and-drop",
+    "homepage": "https://github.com/buzlet/scoop-be",
+    "url": "https://raw.githubusercontent.com/buzlet/scoop-be/f947ae7de01459c203f7629d39adce40da4e395c/scripts/mkshim.bat",
+    "hash": "23ef042ebc50245a83403fbf381a69465c324860469ddd77a1518e76b517d2ce",
+    "bin": "mkshim.bat"
+}
